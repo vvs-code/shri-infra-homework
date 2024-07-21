@@ -1,0 +1,65 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Build Docker image
+        run: docker build -t cr.yandex/<идентификатор_реестра>/app:${{ github.run_number }} -t cr.yandex/<идентификатор_реестра>/app:latest .
+
+      - name: Login to Yandex Container Registry
+        run: echo ${{ secrets.YC_OAUTH_TOKEN }} | docker login --username oauth --password-stdin cr.yandex
+
+      - name: Push Docker image
+        run: docker push cr.yandex/<идентификатор_реестра>/app:${{ github.run_number }} && docker push cr.yandex/<идентификатор_реестра>/app:latest
+
+      - name: Create release branch
+        run: git checkout -b releases/${{ github.run_number }} && git push origin releases/${{ github.run_number }}
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        with:
+          tag_name: ${{ github.run_number }}
+          release_name: Release ${{ github.run_number }}
+          draft: false
+          prerelease: false
+
+      - name: Create issue
+        uses: actions/github-script@v4
+        with:
+          script: |
+            const { github, context } = require('@actions/github');
+            github.issues.create({
+              ...context.repo,
+              title: `Release ${{ github.run_number }}`,
+              body: `Release details: \n- Version: ${{ github.run_number }} \n- Docker Image: cr.yandex/<идентификатор_реестра>/app:${{ github.run_number }} \n- Author: ${context.actor} \n- Date: ${new Date().toISOString()}`,
+            });
+
+      - name: Update CHANGELOG
+        run: |
+          echo "## ${{ github.run_number }}\n\n- Коммиты:\n$(git log --oneline $(git describe --tags --abbrev=0 @^)..@)" > changelog_temp.md
+          cat CHANGELOG.md >> changelog_temp.md
+          mv changelog_temp.md CHANGELOG.md
+          git add CHANGELOG.md
+          git commit -m "Update CHANGELOG for release ${{ github.run_number }}"
+          git push origin main

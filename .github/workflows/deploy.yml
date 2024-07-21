@@ -1,0 +1,43 @@
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version'
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: SSH and Deploy
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.YC_VM_IP }}
+          username: ${{ secrets.YC_VM_USER }}
+          key: ${{ secrets.YC_VM_SSH_KEY }}
+          script: |
+            docker login -u oauth -p ${{ secrets.YC_OAUTH_TOKEN }} cr.yandex
+            docker pull cr.yandex/<идентификатор_реестра>/app:${{ github.event.inputs.version }}_latest
+            docker run -d -p 80:3000 cr.yandex/<идентификатор_реестра>/app:${{ github.event.inputs.version }}_latest
+
+      - name: Update issue
+        uses: actions/github-script@v4
+        with:
+          script: |
+            const { github, context } = require('@actions/github');
+            const issue = github.issues.listForRepo({
+              ...context.repo,
+              labels: 'Release',
+              state: 'open',
+            }).then(issues => issues.data.find(issue => issue.title.includes(`Release ${{ github.event.inputs.version }}`)));
+            
+            if (issue) {
+              github.issues.createComment({
+                ...context.repo,
+                issue_number: issue.number,
+                body: `Deploy details: \n- Version: ${{ github.event.inputs.version }} \n- Docker Image: cr.yandex/<идентификатор_реестра>/app:${{ github.event.inputs.version }}_latest \n- Author: ${context.actor} \n- Date: ${new Date().toISOString()}`,
+              });
+            }

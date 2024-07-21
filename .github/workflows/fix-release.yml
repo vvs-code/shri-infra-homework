@@ -1,0 +1,68 @@
+name: Fix Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version'
+        required: true
+
+jobs:
+  fix-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Build Docker image
+        run: docker build -t cr.yandex/<идентификатор_реестра>/app:${{ github.event.inputs.version }}_fix${{ github.run_number }} -t cr.yandex/<идентификатор_реестра>/app:latest .
+
+      - name: Login to Yandex Container Registry
+        run: echo ${{ secrets.YC_OAUTH_TOKEN }} | docker login --username oauth --password-stdin cr.yandex
+
+      - name: Push Docker image
+        run: docker push cr.yandex/<идентификатор_реестра>/app:${{ github.event.inputs.version }}_fix${{ github.run_number }} && docker push cr.yandex/<идентификатор_реестра>/app:latest
+
+      - name: Create GitHub tag
+        uses: actions/github-script@v4
+        with:
+          script: |
+            const { github, context } = require('@actions/github');
+            github.git.createRef({
+              ...context.repo,
+              ref: `refs/tags/${{ github.event.inputs.version }}_fix${{ github.run_number }}`,
+              sha: context.sha,
+            });
+
+      - name: Update issue
+        uses: actions/github-script@v4
+        with:
+          script: |
+            const { github, context } = require('@actions/github');
+            const issue = github.issues.listForRepo({
+              ...context.repo,
+              labels: 'Release',
+              state: 'open',
+            }).then(issues => issues.data.find(issue => issue.title.includes(`Release ${{ github.event.inputs.version }}`)));
+            
+            if (issue) {
+              github.issues.createComment({
+                ...context.repo,
+                issue_number: issue.number,
+                body: `Fix details: \n- Version: ${{ github.event.inputs.version }} \n- Docker Image: cr.yandex/<идентификатор_реестра>/app:${{ github.event.inputs.version }}_fix${{ github.run_number }} \n- Author: ${context.actor} \n- Date: ${new Date().toISOString()}`,
+              });
+            }
